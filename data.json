@@ -2,10 +2,24 @@
   "cats": {
     "2040773017": {
       "owner_id": 2040773017,
-      "name": "жора",
-      "color": "рыжий",
+      "name": "лор",
+      "color": "чёрный",
       "hunger": 4,
       "happiness": 4,
-      "energy": 2,
-      "created_at": "2024-12-26T13:03:05.323006",
-      "walk_time": 
+      "energy": 4,
+      "created_at": "2024-12-26T13:45:17.860083",
+      "walk_time": null,
+      "connected_users": [
+        7723409604
+      ],
+      "last_messages": {
+      }
+    }
+  },
+  "connection_codes": {
+    "768GE1": [
+      2040773017,
+      "2024-12-27T13:45:17.860119"
+    ]
+  }
+}

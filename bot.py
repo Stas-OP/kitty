@@ -33,6 +33,7 @@ class CatStates(StatesGroup):
     waiting_for_color = State()
     waiting_for_code = State()
     waiting_for_walk_time = State()
+    waiting_for_message = State()
 
 class CatBot:
     def __init__(self):
@@ -49,6 +50,7 @@ class CatBot:
         # Команды
         self.dp.message.register(self.cmd_start, Command('start'))
         self.dp.message.register(self.cmd_connect, Command('connect'))
+        self.dp.message.register(self.cmd_message, Command('message'))
         
         # Колбэки
         self.dp.callback_query.register(
@@ -68,6 +70,7 @@ class CatBot:
         self.dp.message.register(self.process_name, CatStates.waiting_for_name)
         self.dp.message.register(self.process_connection_code, CatStates.waiting_for_code)
         self.dp.message.register(self.process_walk_time, CatStates.waiting_for_walk_time)
+        self.dp.message.register(self.process_message, CatStates.waiting_for_message)
         self.dp.message.register(self.process_main_keyboard, F.text)
 
     def setup_scheduler(self):
@@ -162,7 +165,7 @@ class CatBot:
             "Другие пользователи могут подключиться к вашему котику через команду /connect"
         )
         await callback.message.answer(
-            "Исполь��уйте кнопки под фото для взаимодействия с котиком\n"
+            "Используйте кнопки под фото для взаимодействия с котиком\n"
             "или кнопку на клавиатуре для установки времени прогулки:",
             reply_markup=get_main_keyboard()
         )
@@ -304,54 +307,173 @@ class CatBot:
                 break
                 
         if not owner_id:
-            await message.answer(
-                "У вас нет котика! Используйте /start чтобы создать его."
-            )
+            await message.answer("У вас нет котика!")
             return
             
         cat = self.storage.cats[owner_id]
         
-        match message.text:
-            case "Прогулка":
-                current_time = cat.walk_time.strftime("%H:%M") if cat.walk_time else "не установлено"
-                await message.answer(
-                    f"Текущее время прогулки: {current_time}\n"
-                    "Введите новое время прогулки в формате ЧЧ:ММ (например, 14:30)\n"
-                    "или используйте кнопки ниже:",
-                    reply_markup=get_walk_control_keyboard(has_walk_time=cat.walk_time is not None)
-                )
-                await state.set_state(CatStates.waiting_for_walk_time)
+        if message.text == "Управление котиком":
+            await self.send_cat_status(user_id, owner_id=owner_id)
+        elif message.text == "Прогулка":
+            # Теперь walk_time уже строка, не нужно форматирование
+            current_time = cat.walk_time if cat.walk_time else "не установлено"
+            
+            await message.answer(
+                f"Текущее время прогулки: {current_time}\n"
+                "Введите новое время прогулки в одном из форматов:\n"
+                "ЧЧ:ММ (например: 14:30)\n"
+                "ЧЧ.ММ (например: 14.30)\n"
+                "ЧЧ (например: 14)\n"
+                "Ч (например: 9)",
+                reply_markup=get_walk_control_keyboard(has_walk_time=cat.walk_time is not None)
+            )
+            await state.set_state(CatStates.waiting_for_walk_time)
+        elif message.text == "Отправить сообщение":
+            # Проверяем, отправлял ли пользователь сообщение сегодня
+            today = datetime.now().date()
+            last_message_date = cat.last_messages.get(user_id)
+            
+            if last_message_date and last_message_date.date() == today:
+                await message.answer("Вы уже отправляли сообщение сегодня! Попробуйте завтра.")
+                return
                 
-            case "Управление котиком":
-                await self.send_cat_status(user_id, owner_id=owner_id)
+            await message.answer("Введите сообщение для отправки:")
+            await state.set_state(CatStates.waiting_for_message)
+            await state.update_data(owner_id=owner_id)
 
-    async def process_walk_time(self, message: Message):
+    async def process_walk_time(self, message: Message, state: FSMContext):
+        user_id = message.from_user.id
+        
+        # Ищем котика, к которому подключен пользователь
+        owner_id = None
+        for cat_owner_id, cat in self.storage.cats.items():
+            if user_id == cat_owner_id or user_id in cat.connected_users:
+                owner_id = cat_owner_id
+                break
+                
+        if not owner_id:
+            await message.answer("У вас нет котика!")
+            await state.clear()
+            return
+            
+        cat = self.storage.cats[owner_id]
+        is_connected_user = user_id != owner_id
+        
+        if message.text.lower() == 'отмена':
+            await message.answer("Установка времени отменена!")
+            await state.clear()
+            await self.send_cat_status(user_id, owner_id=owner_id)
+            return
+
         try:
-            # Парсим время из сообщения
-            hour, minute = map(int, message.text.split(':'))
+            time_text = message.text.strip()
+            hour = 0
+            minute = 0
+            
+            # Обработка разных форматов
+            if ':' in time_text:
+                parts = time_text.split(':')
+                hour = int(parts[0])
+                minute = int(parts[1]) if len(parts) > 1 else 0
+            elif '.' in time_text:
+                parts = time_text.split('.')
+                hour = int(parts[0])
+                minute = int(parts[1]) if len(parts) > 1 else 0
+            else:
+                # Просто число - считаем как часы
+                hour = int(time_text)
+                minute = 0
+            
             if not (0 <= hour <= 23 and 0 <= minute <= 59):
                 raise ValueError
             
-            # Сохраняем время как строку в формате HH:MM
-            walk_time = f"{hour:02d}:{minute:02d}"
-            
-            user_id = message.from_user.id
-            if user_id in self.storage.cats:
-                cat = self.storage.cats[user_id]
-                cat.walk_time = walk_time
-                self.storage.save()
-                
+            # Проверяем, что время не ночное
+            if hour < 6 or hour >= 22:
                 await message.answer(
-                    f"Время прогулки установлено на {walk_time}! "
-                    "Я напомню за 30 минут до прогулки 🐱"
+                    "Время прогулки должно быть между 6:00 и 22:00!",
+                    reply_markup=get_walk_control_keyboard(has_walk_time=cat.walk_time is not None)
                 )
-            else:
-                await message.answer("У вас нет котика!")
+                return
+
+            time_str = f"{hour:02d}:{minute:02d}"
+            walk_time = time_str
+            
+            # Обновляем время прогулки
+            cat.walk_time = walk_time
+            self.storage.save()
+            
+            # Уведомляем владельца о смене времени прогулки
+            if is_connected_user:
+                await self.bot.send_message(
+                    owner_id,
+                    f"Стас установил время прогулки на {time_str}"
+                )
+            
+            # Настраиваем напоминания
+            walk_id = f"walk_{owner_id}"
+            
+            # Удаляем старые напоминания, если они есть
+            for job in self.scheduler.get_jobs():
+                if job.id.startswith(walk_id):
+                    self.scheduler.remove_job(job.id)
+            
+            # Устанавливаем время для напоминаний
+            walk_datetime = datetime.now().replace(hour=hour, minute=minute, second=0, microsecond=0)
+            if walk_datetime < datetime.now():
+                walk_datetime += timedelta(days=1)
+            
+            # Добавляем напоминания
+            reminders = [
+                (60, "До прогулки остался 1 час!"),
+                (30, "До прогулки осталось 30 минут!"),
+                (10, "До прогулки осталось 10 минут!"),
+                (0, "Пора гулять!")
+            ]
+            
+            for minutes_before, text in reminders:
+                notify_datetime = walk_datetime - timedelta(minutes=minutes_before)
                 
-        except ValueError:
+                # Если время уведомления уже прошло, пропускаем его
+                if notify_datetime <= datetime.now():
+                    continue
+                
+                self.scheduler.add_job(
+                    self.send_walk_notification,
+                    'date',
+                    run_date=notify_datetime,
+                    args=[owner_id, f"{text} {cat.name.capitalize()} ждёт 🐱"],
+                    id=f"{walk_id}_{minutes_before}"
+                )
+                
+                # Отправляем уведомления и подключенным пользователям
+                for connected_user in cat.connected_users:
+                    self.scheduler.add_job(
+                        self.send_walk_notification,
+                        'date',
+                        run_date=notify_datetime,
+                        args=[connected_user, f"{text} {cat.name.capitalize()} ждёт 🐱"],
+                        id=f"{walk_id}_{minutes_before}_{connected_user}"
+                    )
+            
+            # Настраиваем уведомления
             await message.answer(
-                "Пожалуйста, введите время в формате ЧЧ:ММ\n"
-                "Например: 14:30"
+                f"Время прогулки установлено на {time_str}!\n\n"
+                "Я ��апомню о прогулке:\n"
+                "- За 1 час до прогулки\n"
+                "- За 30 минут до прогулки\n"
+                "- За 10 минут до прогулки\n"
+                "- В момент начала прогулки"
+            )
+            await state.clear()
+            await self.send_cat_status(user_id, owner_id=owner_id)
+            
+        except (ValueError, IndexError):
+            await message.answer(
+                "Пожалуйста, введите время в одном из форматов:\n"
+                "ЧЧ:ММ (например: 14:30)\n"
+                "ЧЧ.ММ (например: 14.30)\n"
+                "ЧЧ (например: 14)\n"
+                "Ч (например: 9)"
             )
 
     async def send_walk_notification(self, user_id: int, text: str):
@@ -363,7 +485,7 @@ class CatBot:
         # Проверяем, есть ли уже котик у пользователя
         if user_id in self.storage.cats:
             await message.answer(
-                "У вас уже есть котик! Вы не можете подключиться к другому."
+                "У вас уже есть котик! Вы не можете подключиться к ��ругому."
             )
             return
             
@@ -382,7 +504,7 @@ class CatBot:
         owner_id, expires = self.storage.connection_codes[code]
         
         if datetime.now() > expires:
-            await message.answer("Код подключения исте��!")
+            await message.answer("Код подключения истек!")
             del self.storage.connection_codes[code]
             self.storage.save()
             await state.clear()
@@ -399,7 +521,7 @@ class CatBot:
                 "Стас подключился к котику"
             )
             
-        # Отправляем статус котика от имени владельца
+        # ��тправляем статус котика от имени владельца
         await self.send_cat_status(
             user_id,
             f"Вы успешно подключились к котику {cat.name}!",
@@ -440,15 +562,70 @@ class CatBot:
             
             if 0 <= minutes_left <= 30:
                 if minutes_left > 0:
-                    message = f"До прогулки осталось {minutes_left} минут! {cat.name.capitalize()} ждёт 🐱"
+                    message = f"До прогулки осталось {minutes_left} минут!"
                 else:
-                    message = f"Пора гулять! {cat.name.capitalize()} с нетерпением ждёт прогулки ��"
+                    message = f"Пора гулять! 🐱"
                     cat.walk_time = None
                     self.storage.save()
                 
                 await self.bot.send_message(cat.owner_id, message)
                 for user_id in cat.connected_users:
                     await self.bot.send_message(user_id, message)
+
+    async def cmd_message(self, message: Message, state: FSMContext):
+        user_id = message.from_user.id
+        
+        # Ищем ��отика, к которому подключен пользователь
+        owner_id = None
+        for cat_owner_id, cat in self.storage.cats.items():
+            if user_id == cat_owner_id or user_id in cat.connected_users:
+                owner_id = cat_owner_id
+                break
+                
+        if not owner_id:
+            await message.answer("У вас нет котика!")
+            return
+            
+        cat = self.storage.cats[owner_id]
+        
+        # Проверяем, отправлял ли пользователь сообщение сегодня
+        today = datetime.now().date()
+        last_message_date = cat.last_messages.get(user_id)
+        
+        if last_message_date and last_message_date.date() == today:
+            await message.answer("Вы уже отправляли сообщение сегодня! Попробуйте завтра.")
+            return
+            
+        await message.answer("Введите сообщение для отправки:")
+        await state.set_state(CatStates.waiting_for_message)
+        await state.update_data(owner_id=owner_id)
+
+    async def process_message(self, message: Message, state: FSMContext):
+        user_id = message.from_user.id
+        data = await state.get_data()
+        owner_id = data['owner_id']
+        cat = self.storage.cats[owner_id]
+        
+        # Отправляем сообщение всем пользователям, кроме отправителя
+        recipients = [owner_id] + cat.connected_users
+        recipients.remove(user_id)
+        
+        # Определяем имя отправителя
+        sender_name = "Маша" if user_id == owner_id else "Стас"
+        message_text = "отправила" if user_id == owner_id else "отправил"
+        
+        for recipient in recipients:
+            await self.bot.send_message(
+                recipient,
+                f"{sender_name} {message_text} сообщение:\n{message.text}"
+            )
+        
+        # Сохраняем время отправки сообщения
+        cat.last_messages[user_id] = datetime.now()
+        self.storage.save()
+        
+        await message.answer("Сообщение отправлено!")
+        await state.clear()
 
 if __name__ == '__main__':
     bot = CatBot()

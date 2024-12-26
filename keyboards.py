@@ -22,6 +22,9 @@ def get_main_keyboard() -> ReplyKeyboardMarkup:
             [
                 KeyboardButton(text='Управление котиком'),
                 KeyboardButton(text='Прогулка')
+            ],
+            [
+                KeyboardButton(text='Отправить сообщение')
             ]
         ],
         resize_keyboard=True
