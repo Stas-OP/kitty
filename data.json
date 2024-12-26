@@ -1,0 +1,11 @@
+{
+  "cats": {
+    "2040773017": {
+      "owner_id": 2040773017,
+      "name": "жора",
+      "color": "рыжий",
+      "hunger": 4,
+      "happiness": 4,
+      "energy": 2,
+      "created_at": "2024-12-26T13:03:05.323006",
+      "walk_time": 
