@@ -56,8 +56,23 @@ def get_confirm_keyboard() -> InlineKeyboardMarkup:
 # Клавиатура управления временем прогулки
 def get_walk_control_keyboard(has_walk_time: bool = False) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.button(text='Отменить установку', callback_data='walk_cancel_setup')
+    
+    # Если время не установлено, показываем популярные варианты
+    if not has_walk_time:
+        popular_times = ['13:00', '14:00', '15:00', '16:00']
+        for time in popular_times:
+            builder.button(text=f'{time} 🕐', callback_data=f'walk_time_{time}')
+        builder.adjust(2)  # Размещаем кнопки времени в два ряда
+    
+    builder.button(text='Отменить установку ❌', callback_data='walk_cancel_setup')
     if has_walk_time:
-        builder.button(text='Удалить время прогулки', callback_data='walk_delete_time')
+        builder.button(text='Удалить время прогулки 🗑️', callback_data='walk_delete_time')
+    builder.adjust(1)  # Кнопки управления в один ряд
+    return builder.as_markup()
+
+# Клавиатура отмены сообщения
+def get_cancel_message_keyboard() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text='Отменить отправку ❌', callback_data='cancel_message')
     builder.adjust(1)
     return builder.as_markup() 
