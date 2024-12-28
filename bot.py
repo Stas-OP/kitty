@@ -77,6 +77,7 @@ class CatBot:
         self.dp.message.register(self.process_connection_code, CatStates.waiting_for_code)
         self.dp.message.register(self.process_walk_time, CatStates.waiting_for_walk_time)
         self.dp.message.register(self.process_message, CatStates.waiting_for_message)
+        self.dp.message.register(self.process_message, CatStates.waiting_for_message, F.photo)
         self.dp.message.register(self.process_main_keyboard, F.text)
 
     def setup_scheduler(self):
@@ -220,7 +221,7 @@ class CatBot:
         await self.send_cat_status(
             callback.from_user.id,
             f"Поздравляем! 🎉 Ты создала котика {data['name']}! ✨\n\n"
-            f"Твой код для подключения других пользователей: 🔑 {code}\n"
+            f"Твой код для подключения других пользоватлей: 🔑 {code}\n"
         )
         await callback.message.answer(
             "Используй кнопки под фото для взаимодействия с котиком 🎮\n"
@@ -371,7 +372,7 @@ class CatBot:
             for minutes_before, text in reminders:
                 notify_datetime = walk_datetime - timedelta(minutes=minutes_before)
                 
-                # Если время уведомления уже прошло, пропускаем его
+                # Если время уведомл��ния уже прошло, пропускаем его
                 if notify_datetime <= datetime.now():
                     continue
                 
@@ -428,7 +429,7 @@ class CatBot:
                 self.storage.save()
                 await state.clear()
                 await callback.message.delete()
-                await callback.answer("Время прогулки удалено")
+                await callback.answer("Время п��огулки удалено")
                 await self.send_cat_status(user_id, owner_id=owner_id)
 
     async def process_main_keyboard(self, message: Message, state: FSMContext):
@@ -484,7 +485,7 @@ class CatBot:
                     return
             
             await message.answer(
-                "Введи сообщение для отправки ✏️:",
+                "Отправь текстовое сообщение или фото с подписью ✏️ 📸:",
                 reply_markup=get_cancel_message_keyboard()
             )
             await state.set_state(CatStates.waiting_for_message)
@@ -760,7 +761,10 @@ class CatBot:
                 await message.answer(f"Ты сможешь отправить следующее сообщение через {hours_left} ч. {minutes_left} мин. ⏳")
                 return
             
-        await message.answer("Введи сообщение для отправки ✏️:")
+        await message.answer(
+            "Отправь текстовое сообщение или фото с подписью ✏️ 📸:",
+            reply_markup=get_cancel_message_keyboard()
+        )
         await state.set_state(CatStates.waiting_for_message)
         await state.update_data(owner_id=owner_id)
 
@@ -779,10 +783,23 @@ class CatBot:
         message_text = "отправила" if user_id == owner_id else "отправил"
         
         for recipient in recipients:
-            await self.bot.send_message(
-                recipient,
-                f"💌 {sender_name} {message_text} сообщение:\n{message.text}"
-            )
+            if message.photo:
+                # Если есть фото, отправляем его с подписью
+                photo = message.photo[-1]  # Берем последнее (самое качественное) фото
+                caption = f"💌 {sender_name} {message_text} фото:"
+                if message.caption:
+                    caption += f"\n{message.caption}"
+                await self.bot.send_photo(
+                    recipient,
+                    photo.file_id,
+                    caption=caption
+                )
+            else:
+                # Если только текст, отправляем как обычно
+                await self.bot.send_message(
+                    recipient,
+                    f"💌 {sender_name} {message_text} сообщение:\n{message.text}"
+                )
         
         # Сохраняем время отправки сообщения с учетом часового пояса
         cat.last_messages[user_id] = datetime.now(timezone(self.config.timezone))
@@ -800,3 +817,4 @@ class CatBot:
 if __name__ == '__main__':
     bot = CatBot()
     asyncio.run(bot.start()) 
+    
