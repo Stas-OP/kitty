@@ -19,7 +19,7 @@ class Cat:
     
     @property
     def age_days(self) -> int:
-        return (datetime.now() - self.created_at).days
+        return (datetime.now() - self.created_at).days + 1
 
     def to_dict(self) -> dict:
         return {
@@ -33,7 +33,7 @@ class Cat:
             'walk_time': self.walk_time,
             'connected_users': self.connected_users,
             'last_messages': {
-                str(user_id): date.isoformat()
+                str(user_id): date.isoformat() if isinstance(date, datetime) else date
                 for user_id, date in self.last_messages.items()
             }
         }
@@ -44,7 +44,7 @@ class Cat:
         data['created_at'] = datetime.fromisoformat(data['created_at'])
         if 'last_messages' in data:
             data['last_messages'] = {
-                int(user_id): datetime.fromisoformat(date)
+                int(user_id): datetime.fromisoformat(date) if isinstance(date, str) else date
                 for user_id, date in data['last_messages'].items()
             }
         return cls(**data)
@@ -78,7 +78,7 @@ class Storage:
             }
             
         except json.JSONDecodeError:
-            print("Ошибка чтения JSON файла!")
+            print("Ошибка чте��ия JSON файла!")
             # Создаём резервную копию файла
             backup_name = f"{self.file_path}.backup"
             try:

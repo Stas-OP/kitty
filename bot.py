@@ -87,6 +87,30 @@ class CatBot:
             'interval',
             hours=1
         )
+        
+        # Поздравление с днем рождения (26 января)
+        self.scheduler.add_job(
+            self.send_birthday_greeting,
+            CronTrigger(
+                month=1,
+                day=26,
+                hour=0,
+                minute=0,
+                timezone=self.config.timezone
+            )
+        )
+        
+        # Поздравление с Новым годом (1 января)
+        self.scheduler.add_job(
+            self.send_new_year_greeting,
+            CronTrigger(
+                month=1,
+                day=1,
+                hour=0,
+                minute=0,
+                timezone=self.config.timezone
+            )
+        )
 
     async def decrease_stats(self):
         now = datetime.now(timezone(self.config.timezone))
@@ -111,6 +135,36 @@ class CatBot:
         for code in expired_codes:
             del self.storage.connection_codes[code]
         self.storage.save()
+
+    async def send_birthday_greeting(self):
+        """Отправка поздравления хозяйке от котика."""
+        # Отправляем поздравление только владельцам (Маше)
+        for cat in self.storage.cats.values():
+            greeting_text = (
+                f"Сообщение от {cat.name}:\n\n"
+                "Любимая Машенька! 🎉\n"
+                "Поздравляю тебя с днём рождения! 🎂\n"
+                "Спасибо, что заботишься обо мне, играешь со мной и любишь меня. "
+                "Ты самая лучшая хозяйка на свете! ❤️\n"
+                "Желаю тебе много счастья, радости и вкусных угощений "
+                "\n\n"
+                "Твой котик 🐱"
+            )
+            # Отправляем только владельцу (Маше)
+            await self.bot.send_message(cat.owner_id, greeting_text)
+
+    async def send_new_year_greeting(self):
+        """Отправка новогоднего поздравления всем пользователям."""
+        greeting_text = "С новым годоооом!!!! ❤️🎄🎅🎁✨"
+        
+        # Отправляем поздравление всем владельцам и подключенным пользователям
+        for cat in self.storage.cats.values():
+            # Отправляем владельцу
+            await self.bot.send_message(cat.owner_id, greeting_text)
+            
+            # Отправляем подключенным пользователям
+            for user_id in cat.connected_users:
+                await self.bot.send_message(user_id, greeting_text)
 
     async def cmd_start(self, message: Message, state: FSMContext):
         user_id = message.from_user.id
@@ -292,6 +346,7 @@ class CatBot:
                 
                 cat.walk_time = None
                 self.storage.save()
+                await state.clear()
                 await callback.message.delete()
                 await callback.answer("Время прогулки удалено")
                 await self.send_cat_status(user_id, owner_id=owner_id)
@@ -458,7 +513,7 @@ class CatBot:
             # Настраиваем уведомления
             await message.answer(
                 f"Время прогулки установлено на {time_str}!\n\n"
-                "Я ��апомню о прогулке:\n"
+                "Я напомню о прогулке:\n"
                 "- За 1 час до прогулки\n"
                 "- За 30 минут до прогулки\n"
                 "- За 10 минут до прогулки\n"
@@ -485,7 +540,7 @@ class CatBot:
         # Проверяем, есть ли уже котик у пользователя
         if user_id in self.storage.cats:
             await message.answer(
-                "У вас уже есть котик! Вы не можете подключиться к ��ругому."
+                "У вас уже есть котик! Вы не можете подключиться к ругому."
             )
             return
             
@@ -521,7 +576,7 @@ class CatBot:
                 "Стас подключился к котику"
             )
             
-        # ��тправляем статус котика от имени владельца
+        # тправляем статус котика от имени владельца
         await self.send_cat_status(
             user_id,
             f"Вы успешно подключились к котику {cat.name}!",
@@ -575,7 +630,7 @@ class CatBot:
     async def cmd_message(self, message: Message, state: FSMContext):
         user_id = message.from_user.id
         
-        # Ищем ��отика, к которому подключен пользователь
+        # Ищем котика, к которому подключен пользователь
         owner_id = None
         for cat_owner_id, cat in self.storage.cats.items():
             if user_id == cat_owner_id or user_id in cat.connected_users:
@@ -588,13 +643,22 @@ class CatBot:
             
         cat = self.storage.cats[owner_id]
         
-        # Проверяем, отправлял ли пользователь сообщение сегодня
-        today = datetime.now().date()
+        # Проверяем, прошло ли 24 часа с момента последнего сообщения
+        now = datetime.now(timezone(self.config.timezone))
         last_message_date = cat.last_messages.get(user_id)
         
-        if last_message_date and last_message_date.date() == today:
-            await message.answer("Вы уже отправляли сообщение сегодня! Попробуйте завтра.")
-            return
+        if last_message_date:
+            # Преобразуем время последнего сообщения в часовой пояс Новосибирска
+            last_message_date = last_message_date.astimezone(timezone(self.config.timezone))
+            # Проверяем, прошло ли 24 часа
+            time_passed = now - last_message_date
+            if time_passed.total_seconds() < 24 * 3600:  # меньше 24 часов
+                # Вычисляем, сколько осталось ждать
+                seconds_left = 24 * 3600 - time_passed.total_seconds()
+                hours_left = int(seconds_left // 3600)
+                minutes_left = int((seconds_left % 3600) // 60)
+                await message.answer(f"Вы сможете отправить следующее сообщение через {hours_left} ч. {minutes_left} мин.")
+                return
             
         await message.answer("Введите сообщение для отправки:")
         await state.set_state(CatStates.waiting_for_message)
@@ -620,8 +684,8 @@ class CatBot:
                 f"{sender_name} {message_text} сообщение:\n{message.text}"
             )
         
-        # Сохраняем время отправки сообщения
-        cat.last_messages[user_id] = datetime.now()
+        # Сохраняем время отправки сообщения с учетом часового пояса
+        cat.last_messages[user_id] = datetime.now(timezone(self.config.timezone))
         self.storage.save()
         
         await message.answer("Сообщение отправлено!")
